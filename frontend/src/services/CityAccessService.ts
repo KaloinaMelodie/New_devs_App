@@ -8,7 +8,7 @@
  * - Caching (reduces unnecessary API calls)
  */
 
-import type { City } from '../types';
+import type { City } from '../types/city';
 
 export class CityAccessError extends Error {
   constructor(
