@@ -50,82 +50,83 @@ export class CityAccessService {
    * Get cities for user - single source of truth
    * All requests coalesce here to prevent duplicates
    */
-  async getCities(context: CityContext): Promise<City[]> {
-    const startTime = Date.now();
+  private fetchPromises: Map<string, Promise<City[]>> = new Map();
 
-    try {
-      // Validate tenant context FIRST
-      if (!context.tenantId) {
-        throw new CityAccessError(
-          'MISSING_TENANT',
-          'Cannot fetch cities without tenant context. Please re-login.',
-          { userId: context.userId, email: context.email }
-        );
-      }
+async getCities(context: CityContext): Promise<City[]> {
+  const startTime = Date.now();
 
-      // Tenant changed - clear cache
-      if (this.currentTenantId && this.currentTenantId !== context.tenantId) {
-        console.log('[CityAccessService] Tenant changed, clearing cache', {
-          from: this.currentTenantId,
-          to: context.tenantId
-        });
-        this.clearCache();
-      }
+  try {
+    if (!context.tenantId) {
+      throw new CityAccessError(
+        'MISSING_TENANT',
+        'Cannot fetch cities without tenant context. Please re-login.',
+        { userId: context.userId, email: context.email }
+      );
+    }
 
-      // Return pending request if exists (deduplication)
-      if (this.fetchPromise) {
-        console.log('[CityAccessService] Returning pending request');
-        return await this.fetchPromise;
-      }
+    if (this.currentTenantId && this.currentTenantId !== context.tenantId) {
+      console.log('[CityAccessService] Tenant changed, clearing cache', {
+        from: this.currentTenantId,
+        to: context.tenantId
+      });
+      this.clearCache();
+    }
 
-      // Return cached if still valid
-      if (this.isCacheValid(context.tenantId)) {
-        console.log('[CityAccessService] Returning cached cities', {
-          count: this.cities.length,
-          age: Date.now() - this.lastFetchTime
-        });
-        return this.cities;
-      }
-
-      // Create new fetch
-      console.log('[CityAccessService] Fetching cities from API', {
-        userId: context.userId,
+    const existingPromise = this.fetchPromises.get(context.tenantId);
+    if (existingPromise) {
+      console.log('[CityAccessService] Returning pending request for tenant', {
         tenantId: context.tenantId
       });
-      
-      this.fetchPromise = this.fetchCitiesFromAPI(context);
+      return await existingPromise;
+    }
 
-      try {
-        this.cities = await this.fetchPromise;
-        this.currentTenantId = context.tenantId;
-        this.lastFetchTime = Date.now();
-        
-        this.trackFetch({
-          success: true,
-          cityCount: this.cities.length,
-          tenantId: context.tenantId,
-          userId: context.userId,
-          latency: Date.now() - startTime,
-          source: 'api'
-        });
-        
-        return this.cities;
-      } finally {
-        this.fetchPromise = null;
-      }
-    } catch (error) {
+    if (this.isCacheValid(context.tenantId)) {
+      console.log('[CityAccessService] Returning cached cities', {
+        count: this.cities.length,
+        age: Date.now() - this.lastFetchTime
+      });
+      return this.cities;
+    }
+
+    console.log('[CityAccessService] Fetching cities from API', {
+      userId: context.userId,
+      tenantId: context.tenantId
+    });
+
+    const fetchPromise = this.fetchCitiesFromAPI(context);
+    this.fetchPromises.set(context.tenantId, fetchPromise);
+
+    try {
+      this.cities = await fetchPromise;
+      this.currentTenantId = context.tenantId;
+      this.lastFetchTime = Date.now();
+
       this.trackFetch({
-        success: false,
-        cityCount: 0,
+        success: true,
+        cityCount: this.cities.length,
         tenantId: context.tenantId,
         userId: context.userId,
         latency: Date.now() - startTime,
-        source: 'api',
-        error: error instanceof Error ? error.message : String(error)
+        source: 'api'
       });
-      throw error;
+
+      return this.cities;
+    } finally {
+      this.fetchPromises.delete(context.tenantId);
     }
+  } catch (error) {
+    this.trackFetch({
+      success: false,
+      cityCount: 0,
+      tenantId: context.tenantId,
+      userId: context.userId,
+      latency: Date.now() - startTime,
+      source: 'api',
+      error: error instanceof Error ? error.message : String(error)
+    });
+    throw error;
   }
+}
 
   /**
    * Fetch cities from backend API
