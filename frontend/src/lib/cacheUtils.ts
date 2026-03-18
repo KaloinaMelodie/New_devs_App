@@ -229,7 +229,7 @@ export class GlobalCacheManager {
       }
       
       // Validate cache data
-      if (!this.isValidForTenant(cacheData, expectedTenantId, CACHE_GENERATION)) {
+      if (!this.isValidForTenant(cacheData, expectedTenantId || null, CACHE_GENERATION)) {
         // Invalid cache data, remove it
         storageManager.remove(key, { context });
         return null;
